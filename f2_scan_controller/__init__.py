@@ -10,79 +10,119 @@ import tempfile
 
 from thesdk import *
 from verilog import *
+from verilog.connector import *
+from verilog.module import *
 
-class f2_scan_controller(verilog,vhdl,thesdk):
+class f2_scan_controller(verilog,thesdk):
+    @property
+    def _classfile(self):
+        return os.path.dirname(os.path.realpath(__file__)) + "/"+__name__
+
     def __init__(self,*arg): 
-        self.proplist = [ 'Rs' ];    #properties that can be propagated from parent
+        self.proplist = [ 'Rs' ];    # properties that can be propagated from parent
         self.Rs = 1;                 # sampling frequency
-        self.iptr_A = refptr();      # Pointer for input data
-        self.model='py';             #can be set externally, but is not propagated
-        self.par= False              #By default, no parallel processing
-        self.queue= []               #By default, no parallel processing
-        self._Z = refptr();          # Pointer for output data
-        #Classfile is required by verilog and vhdl classes to determine paths.
-        self._classfile=os.path.dirname(os.path.realpath(__file__)) + "/"+__name__
+        self.model='py';             # can be set externally, but is not propagated
+        self.par= False              # By default, no parallel processing
+        self.queue= []               # By default, no parallel processing
+        # We now where the verilog file is. 
+        # Let's read in the file to have IOs defined
+        self.dut=verilog_module(file=self.entitypath + '/../f2_dsp/sv/f2_dsp.sv')
+
+        # Scan ins the way to pass the controls# 
+        # Format: Time in rows, 
+        # Signals in columns, first column is the timestamp
+        self._scan = IO();           # Pointer for output data
+        self._scan.Data=Bundle()
+
+        # Define the sign connectors associeted with this 
+        # controller
+        # These are signals of tb driving several targets
+        # Not present in DUT
+        self.connectors=verilog_connector_bundle()
+        newsigs=['reset_loop',
+                 'reset_clock_div',
+                 'lane_refclk_reset'
+                ]
+        for name in newsigs:
+            self.connectors.new(name=name, cls='reg') 
+
+        # These are dut signals
+        dutsigs=[
+            'reset',
+            'io_ctrl_and_clocks_tx_reset_clkdiv',
+            'io_ctrl_and_clocks_rx_reset_clkdiv',
+            'io_ctrl_and_clocks_reset_dacfifo',
+            'io_ctrl_and_clocks_reset_outfifo',
+            'io_ctrl_and_clocks_reset_infifo',
+            'io_ctrl_and_clocks_reset_adcfifo'
+        ]
+        for name in dutsigs:
+            self.connectors.Members[name]=self.dut.io_signals.Members[name] 
+            self.connectors.Members[name].init=''
+        self.scansigs=newsigs+dutsigs
+
         if len(arg)>=1:
             parent=arg[0]
             self.copy_propval(parent,self.proplist)
             self.parent =parent;
         self.init()
+
     def init(self):
-        self._vlogparameters =dict([('Rs',100e6)])
-        self.def_verilog()
-        self._vhdlparameters =dict([('Rs',100e6)])
-        self.def_vhdl()
+        self._vlogparameters =dict([('Rs',self.Rs)])
+        self.reset_sequence_gen()
 
+    # First we start to control Verilog simulations with 
+    # This controller. I.e we pass the IOfile definition
     def main(self):
-        out=np.array(self.iptr_A.Value)
-        if self.par:
-            self.queue.put(out)
-        self._Z.Value=out
+        pass
 
-    def run(self,*arg):
-        if len(arg)>0:
-            self.par=True      #flag for parallel processing
-            self.queue=arg[0]  #multiprocessing.queue as the first argument
-        if self.model=='py':
-            self.main()
-        else: 
-          self.write_infile()
-          if self.model=='sv':
-              self.run_verilog()
-          elif self.model=='vhdl':
-              self.run_vhdl()
-          self.read_outfile()
 
-    def write_infile(self):
-        rndpart=os.path.basename(tempfile.mkstemp()[1])
-        if self.model=='sv':
-            self._infile=self._vlogsimpath +'/A_' + rndpart +'.txt'
-            self._outfile=self._vlogsimpath +'/Z_' + rndpart +'.txt'
-        elif self.model=='vhdl':
-            self._infile=self._vhdlsimpath +'/A_' + rndpart +'.txt'
-            self._outfile=self._vhdlsimpath +'/Z_' + rndpart +'.txt'
-        else:
-            pass
-        try:
-          os.remove(self._infile)
-        except:
-          pass
-        fid=open(self._infile,'wb')
-        np.savetxt(fid,np.transpose(self.iptr_A.Value),fmt='%.0f')
-        #np.savetxt(fid,self.iptr_A.Value.reshape(-1,1).view(float),fmt='%i', delimiter='\t')
-        fid.close()
+    def reset_sequence_gen(self):
+        # This gets interesting
+        # IO is a file data stucture
+        self._scan.Data.Members['reset_sequence']=verilog_iofile(self,name='reset_sequence',dir='in',iotype='ctrl')
+        reset_time=int(32/(self.Rs*1e-12))
+        # Let's assign the shorthand for the iofile
+        f=self._scan.Data.Members['reset_sequence']
+        
+        #Define the connectors associeted with this file
+        ## Start initializations
+        #Init the signals connected to the dut input to zero
+        f.verilog_connectors=self.connectors.list(names=self.scansigs)
+        print(f.verilog_connectors)
 
-    def read_outfile(self):
-        fid=open(self._outfile,'r')
-        out = np.transpose(np.loadtxt(fid))
-        #out = np.loadtxt(fid,dtype=complex)
-        #Of course it does not work symmetrically with savetxt
-        #out=(out[:,0]+1j*out[:,1]).reshape(-1,1) 
-        fid.close()
-        os.remove(self._outfile)
-        if self.par:
-            self.queue.put(out)
-        self._Z.Value=out
+        # Define the control sequence time and data values
+        # [TODO]: de-init could be added to this method
+        f.set_control_data(init=1) # Initialize to ones at time 0
+
+        # After awhile, switch off reset of some blocks 
+        time=reset_time
+        for name in [ 
+                      'reset_clock_div', 
+                      'io_ctrl_and_clocks_tx_reset_clkdiv',
+                      'io_ctrl_and_clocks_rx_reset_clkdiv',
+                      'lane_refclk_reset',
+                      'io_ctrl_and_clocks_reset_dacfifo',
+                      'io_ctrl_and_clocks_reset_outfifo',                      
+                      'io_ctrl_and_clocks_reset_infifo'
+                      ]:
+            f.set_control_data(time=time,name=name,val=0)
+
+        # Switch off the master reset
+        time=2*reset_time
+        for name in [ 
+                      'reset', 
+                      ]:
+            f.set_control_data(time=time,name=name,val=0)
+
+        # Switch off the last ones
+        time=16*reset_time
+        for name in [ 
+                      'reset_loop', 
+                      'io_ctrl_and_clocks_reset_adcfifo' 
+                      ]:
+            f.set_control_data(time=time,name=name,val=0)
+        print(f.data)
 
 if __name__=="__main__":
     import matplotlib.pyplot as plt
