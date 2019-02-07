@@ -81,7 +81,7 @@ class f2_scan_controller(verilog,thesdk):
         # This gets interesting
         # IO is a file data stucture
         self._scan.Data.Members['reset_sequence']=verilog_iofile(self,name='reset_sequence',dir='in',iotype='ctrl')
-        reset_time=int(32/(self.Rs*1e-12))
+        reset_time=int(128/(self.Rs*1e-12))
         # Let's assign the shorthand for the iofile
         f=self._scan.Data.Members['reset_sequence']
         
@@ -89,7 +89,6 @@ class f2_scan_controller(verilog,thesdk):
         ## Start initializations
         #Init the signals connected to the dut input to zero
         f.verilog_connectors=self.connectors.list(names=self.scansigs)
-        print(f.verilog_connectors)
 
         # Define the control sequence time and data values
         # [TODO]: de-init could be added to this method
@@ -122,7 +121,6 @@ class f2_scan_controller(verilog,thesdk):
                       'io_ctrl_and_clocks_reset_adcfifo' 
                       ]:
             f.set_control_data(time=time,name=name,val=0)
-        print(f.data)
 
 if __name__=="__main__":
     import matplotlib.pyplot as plt
