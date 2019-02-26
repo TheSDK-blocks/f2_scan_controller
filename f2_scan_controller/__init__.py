@@ -19,7 +19,10 @@ class f2_scan_controller(verilog,thesdk):
         return os.path.dirname(os.path.realpath(__file__)) + "/"+__name__
 
     def __init__(self,*arg): 
-        self.proplist = [ 'Rs', 'Rxantennas' ];    # properties that can be propagated from parent
+        self.proplist = [ 'Rs', 
+                          'Rxantennas', 
+                          'rx_output_mode' 
+                        ];    # properties that can be propagated from parent
         self.Rs = 1;                 # sampling frequency
         self.Txantennas = 4;                 # sampling frequency
         self.Rxantennas = 4;                 # sampling frequency
@@ -36,7 +39,7 @@ class f2_scan_controller(verilog,thesdk):
         self._scan = IO();           # Pointer for output data
         self._scan.Data=Bundle()
 
-        # Define the sign connectors associeted with this 
+        # Define the signal connectors associeted with this 
         # controller
         # These are signals of tb driving several targets
         # Not present in DUT
@@ -54,23 +57,26 @@ class f2_scan_controller(verilog,thesdk):
         # This gets interesting
         # IO is a file data stucture
         scanfiles=[
-                'reset',
-                'daclut',
-                'adclut'
+                'scan_inputs'
                 ]
         for name in scanfiles:
             self._scan.Data.Members[name]=verilog_iofile(self,name=name,dir='in',iotype='ctrl')
 
+        self.define_scan()
         self.reset()
         self.init_dac_lut()
         self.init_adc_lut()
 
     # First we start to control Verilog simulations with 
     # This controller. I.e we pass the IOfile definition
-    def main(self):
-        pass
+    def setup(self,**kwargs):
+        mode=kwargs.get(mode,'default')
+        if mode=='default':
+            pass
+        elif mode=='rx_outmode':
+            pass
 
-    def reset(self):
+    def define_scan(self):
         # This is a bit complex way of passing the data,
         # But eventually we pass only the data , not the file
         # Definition. File should be created in the testbench
@@ -96,19 +102,54 @@ class f2_scan_controller(verilog,thesdk):
             #i Reveals if those signals even exist.
             self.connectors.Members[name]=self.dut.io_signals.Members[name] 
             self.connectors.Members[name].init=''
-        self.resetsigs=newsigs+dutsigs
+        self.scansigs=newsigs+dutsigs
 
+        dutsigs=[]
+        for i in range(self.Txantennas):
+            dutsigs.append('io_ctrl_and_clocks_dac_lut_write_en_%s' %(i))
+            dutsigs.append('io_ctrl_and_clocks_dac_lut_write_addr_%s' %(i))
+            dutsigs.append('io_ctrl_and_clocks_dac_lut_write_vals_%s_real' %(i))
+            dutsigs.append('io_ctrl_and_clocks_dac_lut_write_vals_%s_imag' %(i))
+
+        for name in dutsigs:
+            self.connectors.Members[name]=self.dut.io_signals.Members[name] 
+            self.connectors.Members[name].init=''
+        self.scansigs+=dutsigs
+
+        dutsigs=['io_ctrl_and_clocks_adc_lut_write_en']
+        dutsigs.append('io_ctrl_and_clocks_adc_lut_write_addr')
+        for i in range(self.Txantennas):
+            dutsigs.append('io_ctrl_and_clocks_adc_lut_write_vals_%s_real' %(i))
+            dutsigs.append('io_ctrl_and_clocks_adc_lut_write_vals_%s_imag' %(i))
+        for name in dutsigs:
+            self.connectors.Members[name]=self.dut.io_signals.Members[name] 
+            self.connectors.Members[name].init=''
+
+        self.scansigs+=dutsigs
+
+        f=self._scan.Data.Members['scan_inputs']
+        f.verilog_connectors=self.connectors.list(names=self.scansigs)
+        f.set_control_data(init=0) # Initialize to zeros at time 0
+
+    def reset(self):
         #start defining the file
         reset_time=int(64/(self.Rs*1e-12))
         # Let's assign the shorthand for the iofile
-        f=self._scan.Data.Members['reset']
-        
-        #Define the connectors associeted with this file
-        ## Start initializations
-        f.verilog_connectors=self.connectors.list(names=self.resetsigs)
-
-        # Define the control sequence time and data values
-        f.set_control_data(init=1) # Initialize to ones at time 0
+        f=self._scan.Data.Members['scan_inputs']
+        time=0
+        for name in [ 
+                      'reset', 
+                      'reset_loop', 
+                      'reset_clock_div', 
+                      'io_ctrl_and_clocks_tx_reset_clkdiv',
+                      'io_ctrl_and_clocks_rx_reset_clkdiv',
+                      'lane_refclk_reset',
+                      'io_ctrl_and_clocks_reset_dacfifo',
+                      'io_ctrl_and_clocks_reset_outfifo',                      
+                      'io_ctrl_and_clocks_reset_infifo',
+                      'io_ctrl_and_clocks_reset_adcfifo'
+                      ]:
+            f.set_control_data(time=time,name=name,val=1)
 
         # After awhile, switch off reset of some blocks 
         time=reset_time
@@ -118,6 +159,7 @@ class f2_scan_controller(verilog,thesdk):
                       'io_ctrl_and_clocks_rx_reset_clkdiv',
                       'lane_refclk_reset',
                       'io_ctrl_and_clocks_reset_dacfifo',
+                      'io_ctrl_and_clocks_reset_adcfifo',
                       'io_ctrl_and_clocks_reset_outfifo',                      
                       'io_ctrl_and_clocks_reset_infifo'
                       ]:
@@ -134,32 +176,15 @@ class f2_scan_controller(verilog,thesdk):
         time=32*reset_time
         for name in [ 
                       'reset_loop', 
-                      'io_ctrl_and_clocks_reset_adcfifo' 
                       ]:
             f.set_control_data(time=time,name=name,val=0)
 
     def init_dac_lut(self):
-        dutsigs=[]
-        for i in range(self.Txantennas):
-            dutsigs.append('io_ctrl_and_clocks_dac_lut_write_en_%s' %(i))
-            dutsigs.append('io_ctrl_and_clocks_dac_lut_write_addr_%s' %(i))
-            dutsigs.append('io_ctrl_and_clocks_dac_lut_write_vals_%s_real' %(i))
-            dutsigs.append('io_ctrl_and_clocks_dac_lut_write_vals_%s_imag' %(i))
-        self.daclutsigs=dutsigs
-
-        for name in self.daclutsigs:
-            self.connectors.Members[name]=self.dut.io_signals.Members[name] 
-            self.connectors.Members[name].init=''
-
-        f=self._scan.Data.Members['daclut']
-        f.verilog_connectors=self.connectors.list(names=self.daclutsigs)
-        f.set_control_data(init=0) # Initialize to ones at time 0
-
         #Define the signals
         time_offset=int(32*64/(self.Rs*1e-12))
         step=int(16/(self.Rs*1e-12))
         # Let's assign the shorthand for the iofile
-        f=self._scan.Data.Members['daclut']
+        f=self._scan.Data.Members['scan_inputs']
         memaddrcount=0;
         time=time_offset
         while (memaddrcount<2**9):
@@ -179,36 +204,22 @@ class f2_scan_controller(verilog,thesdk):
                 f.set_control_data(time=time,name='io_ctrl_and_clocks_dac_lut_write_en_%s' %(index),val=0)
 
     def init_adc_lut(self):
-        dutsigs=['io_ctrl_and_clocks_adc_lut_write_en']
-        dutsigs.append('io_ctrl_and_clocks_adc_lut_write_addr')
-        for i in range(self.Txantennas):
-            dutsigs.append('io_ctrl_and_clocks_adc_lut_write_vals_%s_real' %(i))
-            dutsigs.append('io_ctrl_and_clocks_adc_lut_write_vals_%s_imag' %(i))
-        self.adclutsigs=dutsigs
-        for name in self.adclutsigs:
-            self.connectors.Members[name]=self.dut.io_signals.Members[name] 
-            self.connectors.Members[name].init=''
-
-        f=self._scan.Data.Members['adclut']
-        f.verilog_connectors=self.connectors.list(names=self.adclutsigs)
-        f.set_control_data(init=0) # Initialize to ones at time 0
-
         #Define the signals
         time_offset=int(32*64/(self.Rs*1e-12))
         step=int(16/(self.Rs*1e-12))
         # Let's assign the shorthand for the iofile
-        f=self._scan.Data.Members['adclut']
+        f=self._scan.Data.Members['scan_inputs']
         memaddrcount=0;
         time=time_offset
-        f.set_control_data(time=time,name='io_ctrl_and_clocks_adc_lut_write_en',val=1)
         while (memaddrcount<2**9):
+            f.set_control_data(time=time,name='io_ctrl_and_clocks_adc_lut_write_en',val=1)
             f.set_control_data(time=time,name='io_ctrl_and_clocks_adc_lut_write_addr',val=memaddrcount)
             for index in range(self.Rxantennas): 
                 f.set_control_data(time=time,name='io_ctrl_and_clocks_adc_lut_write_vals_%s_real' %(index),val=memaddrcount)
                 f.set_control_data(time=time,name='io_ctrl_and_clocks_adc_lut_write_vals_%s_imag' %(index),val=memaddrcount)
             memaddrcount+=1
             time+=step
-        f.set_control_data(time=time,name='io_ctrl_and_clocks_adc_lut_write_en', val=0)
+            f.set_control_data(time=time,name='io_ctrl_and_clocks_adc_lut_write_en', val=0)
 
     def serdestest(self):
         pass
