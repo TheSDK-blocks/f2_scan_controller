@@ -1,7 +1,48 @@
 # f2_scan_controller class 
-# Last modification by Marko Kosunen, marko.kosunen@aalto.fi, 05.01.2018 11:07
-#Add TheSDK to path. Importing it first adds the rest of the modules
-#Simple buffer template
+# Marko Kosunen, marko.kosunen@aalto.fi, 05.01.2018 11:07
+        # Serdes test scan write modes:
+        # 0= Zero, do nothing
+        # 1= Scan, Write fom scan
+        # 2= Fill from write_val selcted by Test addressing
+        # 3= Loop, Keep on filling until changed to zero
+
+        #Test addressing 
+        #dsp_to_serdes_address   = Vec(numserdes+2,Input(UInt(log2Ceil(neighbours+2).W)))
+        #serdes_to_dsp_address   = Vec(neighbours+2,Input(UInt(log2Ceil(numserdes+2).W)))
+        # from_dsp 0, from rx_dsp
+        # from_dsp 1-neighbours from tx_dsp outputs to neighbours
+        # from_dsp neighbours+1 from serdestest memory
+
+        # from_serdes( 0 to numseres-1) from serdes rx
+        # from_serdes(numserdes) from rx_dsp
+        # from_serdes(numserdes+1) from serdestest_memory
+
+        # to dsp (0) to tx_dsp_iptr_A
+        # to dsp (1-neighbours) to rx_dsp_neighbours
+        # to dsp (neighbours+1) to serdestest_memory
+        
+        # To serdes has only nserdes valid addresses
+        # to_serdes(0 to nserdes-1) io.lanes_tx(0 to nserdes-1)
+
+        #To connect to tx_iptr_A the output of the memory
+        #serdes_to_dsp_address(0)=numserdess+1
+
+        #To connect to memory the output of the serdes0_rx
+        #serdes_to_dsp_address(neighbours+1)=0
+
+        #To connect to memory the output of the rx_dsp 
+        # serdes_to_dsp_address(neighbours+1)=numserdes
+
+        #To connect to serdes0_tx the output of the rx_dsp
+        #dsp_to_serdes_address(0)=0
+
+        #To connect to serdes0_tx the output of the memory
+        #dsp_to_serdes_address(0)=neighbours+1
+
+        #To connect to serdes0_tx the output of the tx_neighbour_output1
+        #dsp_to_serdes_address(0)=1
+
+
 import os
 import sys
 
@@ -22,6 +63,7 @@ class f2_scan_controller(verilog,thesdk):
         self.proplist = [ 'Rs', 
                           'Rs_dsp'
                           'Rxantennas', 
+                          'Users',
                           'rx_output_mode', 
                           'rx_dsp_mode', 
                           'dsp_interpolator_scales',
@@ -38,6 +80,7 @@ class f2_scan_controller(verilog,thesdk):
         self.Users      = 4;             # Users
         self.nserdes    = 2;             # Serdeses
         self.neighbours = 2;             # neighbours
+        self.memsize    =2**13;          # Test memory size
         self.rx_output_mode = 1;
         self.rx_dsp_mode = 4; #Log2(decimratio) or 4
         self.dsp_interpolator_scales=[1,1,1,1]
@@ -47,11 +90,13 @@ class f2_scan_controller(verilog,thesdk):
         self.model='py';             # can be set externally, but is not propagated
         self.par= False              # By default, no parallel processing
         self.queue= []               # By default, no parallel processing
+
         # We now where the verilog file is. 
         # Let's read in the file to have IOs defined
         self.dut=verilog_module(file=self.entitypath + '/../f2_dsp/sv/f2_dsp.sv')
         # We need to replicate this in order to get witdth automatically
-        self.clockdivider=verilog_module(file=self.entitypath +'/../f2_dsp/sv/clkdiv_n_2_4_8.v')
+        self.clockdivider=verilog_module(file=self.entitypath +
+                '/../f2_dsp/sv/clkdiv_n_2_4_8.v')
         self.clockdivider.io_signals.mv(fro='io_Ndiv',to='lane_refclk_Ndiv')
         self.clockdivider.io_signals.mv(fro='io_shift',to='lane_refclk_shift')
         self.clockdivider.io_signals.mv(fro='io_clkpn',to='lane_refclk')
@@ -78,12 +123,14 @@ class f2_scan_controller(verilog,thesdk):
         #These are signals not in dut
         self.newsigs=[
                  'initdone',
+                 'flag',        #Suprisingly, signal that can be used for flagging
                  'reset_loop'
                 ]
         # Initialize Selected signals with parameter values
         # These are tuples defining name init value pair
         self.signallist=[
                 ('reset', 1),
+                ('flag', 0),
                 ('reset_loop',1),
                 ('initdone',0),
                 ('reset_clock_div',1),
@@ -94,7 +141,7 @@ class f2_scan_controller(verilog,thesdk):
                 ('io_ctrl_and_clocks_reset_outfifo', 1),
                 ('io_ctrl_and_clocks_reset_infifo', 1),
                 ('io_ctrl_and_clocks_reset_adcfifo', 1),
-                ('lane_refclk_Ndiv', 2),
+                ('lane_refclk_Ndiv', 16),
                 ('lane_refclk_shift', 0),
                 ('io_ctrl_and_clocks_tx_Ndiv', int(self.Rs/(8*self.Rs_dsp))),
                 ('io_ctrl_and_clocks_tx_clkdiv_shift', 0),
@@ -181,50 +228,18 @@ class f2_scan_controller(verilog,thesdk):
             ('io_ctrl_and_clocks_adc_lut_write_addr',0)
         ]
 
-        #Every 
-        #dsp_to_serdes_address   = Vec(numserdes+2,Input(UInt(log2Ceil(neighbours+2).W)))
-        #serdes_to_dsp_address   = Vec(neighbours+2,Input(UInt(log2Ceil(numserdes+2).W)))
-        # from_dsp 0, from rx_dsp
-        # from_dsp 1-neighbours from tx_dsp outputs to neighbours
-        # from_dsp neighbours+1 from serdestest memory
-
-        # from_serdes( 0 to numseres-1) from serdes rx
-        # from_serdes(numserdes) from rx_dsp
-        # from_serdes(numserdes+1) from serdestest_memory
-
-        # to dsp (0) to tx_dsp_iptr_A
-        # to dsp (1-neighbours) to rx_dsp_neighbours
-        # to dsp (neighbours+1) to serdestest_memory
-        
-        # To serdes has only nserdes valid addresses
-        # to_serdes(0 to nserdes-1) io.lanes_tx(0 to nserdes-1)
-
-        #To connect to memory the output of the serdes0_rx
-        #serdes_to_dsp_address(neighbours+1)=0
-
-        #To connect to memory the output of the rx_dsp 
-        # serdes_to_dsp_address(neighbours+1)=numserdes
-
-
-        #To connect to serdes0_tx the output of the rx_dsp
-        #dsp_to_serdes_address(0)=0
-        #To connect to serdes0_tx the output of the memory
-        #dsp_to_serdes_address(0)=neighbours+1
-        #To connect to serdes0_tx the output of the tx_neighbour output1
-        #dsp_to_serdes_address(0)=1
-
-
         for scanind in range(self.nserdes+2):
             self.signallist+=[ 
                 ('io_ctrl_and_clocks_from_serdes_scan_%s_valid' %(scanind), 1),
                 ('io_ctrl_and_clocks_from_dsp_scan_%s_valid' %(scanind),1),
                 ('io_ctrl_and_clocks_to_serdes_mode_%s' %(scanind), 1),
                 ('io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(scanind), 0),
-                ('io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(scanind), 0)
             ]
-        for scanind in range(self.nserdes+4):
-            self.signallist+=[ ('io_ctrl_and_clocks_to_dsp_mode_%s' %(scanind), 1)]
 
+        for scanind in range(self.neighbours+2):
+            self.signallist+=[ ('io_ctrl_and_clocks_to_dsp_mode_%s' %(scanind), 1),
+                ('io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(scanind), 0) ]
+            
         self.init()
 
     def init(self):
@@ -235,32 +250,26 @@ class f2_scan_controller(verilog,thesdk):
                 'scan_inputs'
                 ]
         for name in scanfiles:
-            self._scan.Data.Members[name]=verilog_iofile(self,name=name,dir='in',iotype='ctrl')
+            self._scan.Data.Members[name]=verilog_iofile(self,name=name,
+                    dir='in',iotype='ctrl')
+        f=self._scan.Data.Members['scan_inputs']
 
         self.define_scan()
         self.reset()
         self.init_dac_lut()
         self.init_adc_lut()
-        self.setup()
+        f.set_control_data(time=self.curr_time,name='initdone', val=1)
         
     # First we start to control Verilog simulations with 
     # This controller. I.e we pass the IOfile definition
-    def setup(self,**kwargs):
-        #mode=kwargs.get('mode','default')
-        mode=kwargs.get('mode','serdes_rx_to_memory')
-        print('Mode is %s' %(mode))
-        f=self._scan.Data.Members['scan_inputs']
-        if mode=='default':
-            f.set_control_data(time=self.curr_time,name='initdone', val=1)
-        elif mode=='serdes_rx_to_memory':
-            f.set_control_data(time=self.curr_time,name='initdone', val=1)
-            #To connect to memory the output of the serdes0_rx
-            #serdes_to_dsp_address(neighbours+1)=0
-            f.set_control_data(time=self.curr_time,name\
-                ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(self.neighbours+1),val=0)
-            #Mode2 is to fill
-            f.set_control_data(time=self.curr_time,name\
-                    ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=2)
+    #def default_setup(self):
+    #    if mode=='serdes_rx_to_memory':
+    #        self.fill_test_memory_through_serdes_rx()
+    #    elif mode=='fill_test_memory_through_scan':
+    #        f=self._scan.Data.Members['scan_inputs']
+    #        f.set_control_data(time=self.curr_time,name='initdone', val=1)
+    #        self.fill_test_memory_through_scan()
+    #        self.read_test_memory_through_scan()
 
     def define_scan(self):
         # This is a bit complex way of passing the data,
@@ -382,457 +391,160 @@ class f2_scan_controller(verilog,thesdk):
             f.set_control_data(time=time,name='io_ctrl_and_clocks_adc_lut_reset', val=0)
         self.curr_time=time
 
-        
-    def test_rx_through_serdestest(self):
-        pass
+    # Fill test memory methods
+    def fill_test_memory_through_serdes_rx(self):
+        f=self._scan.Data.Members['scan_inputs']
+        #To connect to memory the output of the serdes0_rx
+        #serdes_to_dsp_address(neighbours+1)=0
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(self.neighbours+1),val=0)
+        #Mode2 is to fill
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=2)
+        #This is how long it takes, 
+        self.curr_time+=self.memsize*int(1/(self.Rs_dsp*1e-12))
+        #Lets flag for it
+        f.set_control_data(time=self.curr_time,name\
+            ='flag', val=1)
+        self.curr_time+=int(1/(self.Rs_dsp*1e-12))
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=0)
 
-  #output        io_ctrl_and_clocks_from_serdes_scan_0_ready, // @[:@123372.4]
-  #input         io_ctrl_and_clocks_from_serdes_scan_0_valid, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_0_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_0_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_0_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_1_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_1_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_1_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_2_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_2_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_2_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_3_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_3_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_3_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_4_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_4_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_4_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_5_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_5_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_5_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_6_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_6_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_6_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_7_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_7_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_7_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_8_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_8_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_8_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_9_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_9_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_9_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_10_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_10_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_10_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_11_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_11_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_11_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_12_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_12_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_12_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_13_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_13_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_13_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_14_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_14_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_14_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_15_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_0_bits_data_15_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_data_15_uindex, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_from_serdes_scan_0_bits_rxindex, // @[:@123372.4]
-  #output        io_ctrl_and_clocks_from_serdes_scan_1_ready, // @[:@123372.4]
-  #input         io_ctrl_and_clocks_from_serdes_scan_1_valid, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_0_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_0_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_0_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_1_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_1_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_1_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_2_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_2_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_2_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_3_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_3_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_3_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_4_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_4_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_4_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_5_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_5_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_5_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_6_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_6_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_6_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_7_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_7_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_7_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_8_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_8_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_8_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_9_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_9_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_9_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_10_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_10_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_10_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_11_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_11_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_11_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_12_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_12_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_12_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_13_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_13_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_13_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_14_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_14_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_14_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_15_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_1_bits_data_15_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_data_15_uindex, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_from_serdes_scan_1_bits_rxindex, // @[:@123372.4]
-  #output        io_ctrl_and_clocks_from_serdes_scan_2_ready, // @[:@123372.4]
-  #input         io_ctrl_and_clocks_from_serdes_scan_2_valid, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_0_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_0_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_0_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_1_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_1_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_1_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_2_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_2_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_2_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_3_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_3_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_3_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_4_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_4_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_4_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_5_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_5_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_5_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_6_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_6_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_6_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_7_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_7_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_7_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_8_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_8_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_8_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_9_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_9_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_9_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_10_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_10_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_10_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_11_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_11_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_11_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_12_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_12_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_12_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_13_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_13_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_13_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_14_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_14_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_14_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_15_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_2_bits_data_15_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_data_15_uindex, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_from_serdes_scan_2_bits_rxindex, // @[:@123372.4]
-  #output        io_ctrl_and_clocks_from_serdes_scan_3_ready, // @[:@123372.4]
-  #input         io_ctrl_and_clocks_from_serdes_scan_3_valid, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_0_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_0_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_0_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_1_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_1_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_1_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_2_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_2_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_2_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_3_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_3_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_3_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_4_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_4_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_4_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_5_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_5_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_5_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_6_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_6_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_6_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_7_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_7_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_7_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_8_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_8_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_8_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_9_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_9_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_9_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_10_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_10_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_10_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_11_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_11_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_11_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_12_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_12_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_12_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_13_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_13_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_13_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_14_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_14_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_14_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_15_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_serdes_scan_3_bits_data_15_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_data_15_uindex, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_from_serdes_scan_3_bits_rxindex, // @[:@123372.4]
-  #output        io_ctrl_and_clocks_from_dsp_scan_0_ready, // @[:@123372.4]
-  #input         io_ctrl_and_clocks_from_dsp_scan_0_valid, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_0_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_0_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_0_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_1_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_1_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_1_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_2_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_2_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_2_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_3_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_3_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_3_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_4_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_4_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_4_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_5_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_5_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_5_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_6_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_6_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_6_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_7_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_7_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_7_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_8_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_8_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_8_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_9_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_9_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_9_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_10_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_10_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_10_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_11_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_11_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_11_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_12_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_12_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_12_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_13_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_13_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_13_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_14_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_14_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_14_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_15_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_0_bits_data_15_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_data_15_uindex, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_from_dsp_scan_0_bits_rxindex, // @[:@123372.4]
-  #output        io_ctrl_and_clocks_from_dsp_scan_1_ready, // @[:@123372.4]
-  #input         io_ctrl_and_clocks_from_dsp_scan_1_valid, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_0_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_0_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_0_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_1_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_1_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_1_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_2_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_2_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_2_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_3_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_3_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_3_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_4_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_4_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_4_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_5_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_5_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_5_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_6_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_6_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_6_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_7_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_7_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_7_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_8_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_8_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_8_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_9_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_9_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_9_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_10_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_10_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_10_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_11_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_11_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_11_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_12_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_12_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_12_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_13_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_13_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_13_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_14_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_14_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_14_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_15_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_1_bits_data_15_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_data_15_uindex, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_from_dsp_scan_1_bits_rxindex, // @[:@123372.4]
-  #output        io_ctrl_and_clocks_from_dsp_scan_2_ready, // @[:@123372.4]
-  #input         io_ctrl_and_clocks_from_dsp_scan_2_valid, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_0_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_0_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_0_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_1_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_1_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_1_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_2_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_2_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_2_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_3_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_3_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_3_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_4_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_4_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_4_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_5_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_5_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_5_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_6_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_6_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_6_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_7_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_7_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_7_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_8_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_8_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_8_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_9_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_9_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_9_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_10_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_10_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_10_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_11_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_11_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_11_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_12_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_12_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_12_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_13_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_13_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_13_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_14_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_14_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_14_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_15_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_2_bits_data_15_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_data_15_uindex, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_from_dsp_scan_2_bits_rxindex, // @[:@123372.4]
-  #output        io_ctrl_and_clocks_from_dsp_scan_3_ready, // @[:@123372.4]
-  #input         io_ctrl_and_clocks_from_dsp_scan_3_valid, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_0_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_0_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_0_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_1_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_1_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_1_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_2_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_2_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_2_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_3_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_3_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_3_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_4_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_4_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_4_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_5_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_5_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_5_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_6_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_6_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_6_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_7_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_7_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_7_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_8_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_8_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_8_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_9_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_9_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_9_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_10_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_10_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_10_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_11_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_11_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_11_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_12_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_12_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_12_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_13_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_13_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_13_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_14_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_14_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_14_uindex, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_15_udata_real, // @[:@123372.4]
-  #input  [15:0] io_ctrl_and_clocks_from_dsp_scan_3_bits_data_15_udata_imag, // @[:@123372.4]
-  #input  [3:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_data_15_uindex, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_from_dsp_scan_3_bits_rxindex, // @[:@123372.4]
-  #input  [2:0]  io_ctrl_and_clocks_dsp_to_serdes_address_0, // @[:@123372.4]
-  #input  [2:0]  io_ctrl_and_clocks_dsp_to_serdes_address_1, // @[:@123372.4]
-  #input  [2:0]  io_ctrl_and_clocks_dsp_to_serdes_address_2, // @[:@123372.4]
-  #input  [2:0]  io_ctrl_and_clocks_dsp_to_serdes_address_3, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_serdes_to_dsp_address_0, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_serdes_to_dsp_address_1, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_serdes_to_dsp_address_2, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_serdes_to_dsp_address_3, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_serdes_to_dsp_address_4, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_serdes_to_dsp_address_5, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_serdes_mode_0, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_serdes_mode_1, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_serdes_mode_2, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_serdes_mode_3, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_dsp_mode_0, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_dsp_mode_1, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_dsp_mode_2, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_dsp_mode_3, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_dsp_mode_4, // @[:@123372.4]
-  #input  [1:0]  io_ctrl_and_clocks_to_dsp_mode_5, // @[:@123372.4]
-        #Signals
-        # write_address
-        # write_value  
-        # write_en     
-        # read_mode    
-        # read_address 
-        # read_value   
-        # read_en      
-        #name='serdestest_write'
-        #ionames=[]
-        #ionames+=['io_ctrl_and_clocks_serdestest_scan_write_mode',
-        #          'io_ctrl_and_clocks_serdestest_scan_write_address']
-        #ionames.append('io_ctrl_and_clocks_serdestest_scan_write_en')
-        #ionames.append('io_ctrl_and_clocks_serdestest_scan_write_value_rxindex')
-        #for user in range(self.Users):
-        #    ionames.append('io_ctrl_and_clocks_serdestest_scan_write_value_data_%s_udata_real' %(user))
-        #    ionames.append('io_ctrl_and_clocks_serdestest_scan_write_value_data_%s_udata_imag' %(user))
-        #self.iofile_bundle.Members[name].verilog_connectors=\
-        #        self.tb.connectors.list(names=ionames)
+    def fill_test_memory_through_dsp_rx(self):
+        f=self._scan.Data.Members['scan_inputs']
+        #To connect to memory the output of the rx_dsp 
+        # serdes_to_dsp_address(neighbours+1)=numserdes
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(self.neighbours+1),
+            val=self.nserdes)
+        #Mode2 is to fill
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=2)
+        #This is how long it takes, 
+        self.curr_time+=self.memsize*int(1/(self.Rs_dsp*1e-12))
+        #Lets flag for it
+        f.set_control_data(time=self.curr_time,name\
+            ='flag', val=1)
+        self.curr_time+=int(1/(self.Rs_dsp*1e-12))
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=0)
+
+    def fill_test_memory_through_scan(self):
+        # Serdes test scan write modes:
+        # 0=Zero, do nothing
+        # 1= Scan, Write fom scan
+        # 2= Fill from write_val selcted by Test addressing
+        # 3= Loop, Keep on filling until changed to zero
+        f=self._scan.Data.Members['scan_inputs']
+        #Mode2 is to fill
+        f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=1)
+        step=int(1/(self.Rs_dsp*1e-12))
+        for address in range(self.memsize):
+            f.set_control_data(time=self.curr_time,name\
+                ='io_ctrl_and_clocks_serdestest_scan_write_address', val=address)
+            for user in range(self.Users):
+                # Let's make this simple first
+                f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_write_value_data_%s_udata_real'\
+                            %(user) ,val=address)
+                f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_write_value_data_%s_udata_imag'\
+                            %(user) ,val=address)
+            f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_write_en', val=1)
+            self.curr_time+=step
+            f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_write_en', val=0)
+        f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=0)
+        self.curr_time+=step
+
+    #Flush test memory methods
+    def flush_test_memory_through_serdes_tx(self):
+        f=self._scan.Data.Members['scan_inputs']
+        #To connect to memory the output of the serdes0_rx
+        #serdes_to_dsp_address(neighbours+1)=0
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(self.neighbours+1),val=0)
+        #Mode2 is to fill
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=2)
+        #This is how long it takes, 
+        self.curr_time+=self.memsize*int(1/(self.Rs_dsp*1e-12))
+        #Lets flag for it
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=0)
+        self.curr_time+=int(1/(self.Rs_dsp*1e-12))
+
+
+    def flush_test_memory_through_dsp_tx(self):
+        f=self._scan.Data.Members['scan_inputs']
+        #To connect to tx_iptr_A the output of the memory
+        #dsp_to_dsp_address(0)=numserdess+1
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(0),val=self.nserdes+1)
+        #Mode2 is to fill
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=2)
+        #This is how long it takes, 
+        self.curr_time+=self.memsize*int(1/(self.Rs_dsp*1e-12))
+        #Lets flag for it
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=0)
+        self.curr_time+=int(1/(self.Rs_dsp*1e-12))
+        
+
+    def flush_test_memory_through_scan(self):
+        # Serdes test scan write modes:
+        # 0=Zero, do nothing
+        # 1= Scan, Write fom scan
+        # 2= Fill from write_val selcted by Test addressing
+        # 3= Loop, Keep on filling until changed to zero
+        f=self._scan.Data.Members['scan_inputs']
+        #Mode21 is to scan
+        f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=1)
+        step=int(1/(self.Rs_dsp*1e-12))
+        for address in range(self.memsize):
+            f.set_control_data(time=self.curr_time,name\
+                ='io_ctrl_and_clocks_serdestest_scan_read_address', val=address)
+            #for user in range(self.Users):
+            #    # Let's make this simple first
+            #    f.set_control_data(time=self.curr_time,name\
+            #        ='io_ctrl_and_clocks_serdestest_scan_write_value_data_%s_udata_real'\
+            #                %(user) ,val=address)
+            #    f.set_control_data(time=self.curr_time,name\
+            #        ='io_ctrl_and_clocks_serdestest_scan_write_value_data_%s_udata_imag'\
+            #                %(user) ,val=address)
+            f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_read_en', val=1)
+            self.curr_time+=step
+            f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_read_en', val=0)
+        f.set_control_data(time=self.curr_time,name\
+                    ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=0)
+        self.curr_time+=step
+
+    #def set_dsp_interpolator_scales(self,**kwargs):
+    #    dsp_interpolator_scales=kwargs.get('dsp_interpolator_scales',self.dsp_interpolator_scales)
+    #    f=self._scan.Data.Members['scan_inputs']
+    #    for tx in range(self.Txantennas):
+    #        self.signallist+=[
+    #            ('io_ctrl_and_clocks_interpolator_controls_%s_cic3derivscale' %(tx), 
+    #                self.dsp_interpolator_scales[3]),
+    #            ('io_ctrl_and_clocks_interpolator_controls_%s_cic3derivshift' %(tx), 
+    #                self.dsp_interpolator_cic3shift),
+    #            ('io_ctrl_and_clocks_interpolator_controls_%s_hb1scale' %(tx), 
+    #                self.dsp_interpolator_scales[0]),
+    #            ('io_ctrl_and_clocks_interpolator_controls_%s_hb2scale' %(tx), 
+    #                self.dsp_interpolator_scales[1]),
+    #            ('io_ctrl_and_clocks_interpolator_controls_%s_hb3scale' %(tx), 
+    #                self.dsp_interpolator_scales[2]),
+    #            ('io_ctrl_and_clocks_interpolator_controls_%s_mode' %(tx), 
+    #                4),
+    #    f.set_control_data(time=self.curr_time,name\
+    #                ='dsp_interpolator_scales', val=0)
 
 if __name__=="__main__":
     import matplotlib.pyplot as plt
