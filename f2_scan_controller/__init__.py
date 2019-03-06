@@ -463,7 +463,8 @@ class f2_scan_controller(verilog,thesdk):
 
     def write_loop_test_memory_through_serdes_rx(self,**kwargs):
         f=self._scan.Data.Members['scan_inputs']
-        duration=kwargs.get('duration',self.memsize*int(1/(self.Rs_dsp*1e-12)))
+        rate=kwargs.get('rate',self.Rs_dsp)
+        duration=kwargs.get('duration',self.memsize*int(1/(rate*1e-12)))
         #To connect to memory the output of the serdes0_rx
         #serdes_to_dsp_address(neighbours+1)=0
         f.set_control_data(time=self.curr_time,name\
@@ -479,8 +480,10 @@ class f2_scan_controller(verilog,thesdk):
                 ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=0)
 
     #Flush test memory methods
-    def flush_test_memory_through_serdes_tx(self):
+    def flush_test_memory_through_serdes_tx(self,**kwargs):
         f=self._scan.Data.Members['scan_inputs']
+        rate=kwargs.get('rate',self.Rs_dsp)
+        duration=kwargs.get('duration',self.memsize*int(1/(rate*1e-12)))
         #To connect to serdes0_tx the output of the memory
         #dsp_to_serdes_address(0)=neighbours+1
         f.set_control_data(time=self.curr_time,name\
@@ -489,15 +492,16 @@ class f2_scan_controller(verilog,thesdk):
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=2)
         #This is how long it takes, 
-        self.curr_time+=self.memsize*int(1/(self.Rs_dsp*1e-12))
+        self.curr_time+=duration
         #Lets flag for it
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=0)
-        self.curr_time+=int(1/(self.Rs_dsp*1e-12))
 
 
-    def flush_test_memory_through_dsp_tx(self):
+    def flush_test_memory_through_dsp_tx(self,**kwargs):
         f=self._scan.Data.Members['scan_inputs']
+        rate=kwargs.get('rate',self.Rs_dsp)
+        duration=kwargs.get('duration',self.memsize*int(1/(rate*1e-12)))
         #To connect to tx_iptr_A the output of the memory
         #serdes_to_dsp_address(0)=numserdess+1
         f.set_control_data(time=self.curr_time,name\
@@ -506,12 +510,10 @@ class f2_scan_controller(verilog,thesdk):
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=2)
         #This is how long it takes, 
-        self.curr_time+=self.memsize*int(1/(self.Rs_dsp*1e-12))
+        self.curr_time+=duration
         #Lets flag for it
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=0)
-        self.curr_time+=int(1/(self.Rs_dsp*1e-12))
-        
 
     def flush_test_memory_through_scan(self):
         # Serdes test scan write modes:
