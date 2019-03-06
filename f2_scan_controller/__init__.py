@@ -410,7 +410,8 @@ class f2_scan_controller(verilog,thesdk):
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=0)
 
-    def fill_test_memory_through_dsp_rx(self):
+    def fill_test_memory_through_dsp_rx(self,**kwargs):
+        rate=kwargs.get('rate',self.Rs_dsp)
         f=self._scan.Data.Members['scan_inputs']
         #To connect to memory the output of the rx_dsp 
         # serdes_to_dsp_address(neighbours+1)=numserdes
@@ -421,11 +422,11 @@ class f2_scan_controller(verilog,thesdk):
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=2)
         #This is how long it takes, 
-        self.curr_time+=self.memsize*int(1/(self.Rs_dsp*1e-12))
+        self.curr_time+=self.memsize*int(1/(rate*1e-12))
         #Lets flag for it
         f.set_control_data(time=self.curr_time,name\
             ='flag', val=1)
-        self.curr_time+=int(1/(self.Rs_dsp*1e-12))
+        self.curr_time+=int(1/(rate*1e-12))
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=0)
 
@@ -460,13 +461,30 @@ class f2_scan_controller(verilog,thesdk):
                     ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=0)
         self.curr_time+=step
 
-    #Flush test memory methods
-    def flush_test_memory_through_serdes_tx(self):
+    def write_loop_test_memory_through_serdes_rx(self,**kwargs):
         f=self._scan.Data.Members['scan_inputs']
+        duration=kwargs.get('duration',self.memsize*int(1/(self.Rs_dsp*1e-12)))
         #To connect to memory the output of the serdes0_rx
         #serdes_to_dsp_address(neighbours+1)=0
         f.set_control_data(time=self.curr_time,name\
-            ='io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(self.neighbours+1),val=0)
+            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(self.neighbours+1),val=0)
+        #Mode2 is to fill
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=3)
+        #Lets flag for it
+        if duration !=float('Inf'):
+            #This is how long it takes, 
+            self.curr_time+=duration
+            f.set_control_data(time=self.curr_time,name\
+                ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=0)
+
+    #Flush test memory methods
+    def flush_test_memory_through_serdes_tx(self):
+        f=self._scan.Data.Members['scan_inputs']
+        #To connect to serdes0_tx the output of the memory
+        #dsp_to_serdes_address(0)=neighbours+1
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(0),val=self.neighbours+1)
         #Mode2 is to fill
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=2)
@@ -481,7 +499,7 @@ class f2_scan_controller(verilog,thesdk):
     def flush_test_memory_through_dsp_tx(self):
         f=self._scan.Data.Members['scan_inputs']
         #To connect to tx_iptr_A the output of the memory
-        #dsp_to_dsp_address(0)=numserdess+1
+        #serdes_to_dsp_address(0)=numserdess+1
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(0),val=self.nserdes+1)
         #Mode2 is to fill
@@ -525,6 +543,50 @@ class f2_scan_controller(verilog,thesdk):
         f.set_control_data(time=self.curr_time,name\
                     ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=0)
         self.curr_time+=step
+
+    def read_loop_test_memory_through_serdes_tx(self,**kwargs):
+        f=self._scan.Data.Members['scan_inputs']
+        duration=kwargs.get('duration',self.memsize*int(1/(self.Rs_dsp*1e-12)))
+        #To connect to serdes0_tx the output of the memory
+        #dsp_to_serdes_address(0)=neighbours+1
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(0),val=self.neighbours+1)
+        #Mode3 is to loop
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=3)
+
+        if duration !=float('Inf'):
+            #This is how long it takes, 
+            self.curr_time+=duration
+            f.set_control_data(time=self.curr_time,name\
+                ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=0)
+
+    def bypass_rx_dsp(self):
+        f=self._scan.Data.Members['scan_inputs']
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_adc_fifo_lut_mode',val=1)
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_rx_Ndiv',val=1)
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_rx_clkdiv_shift',val=3)
+        f.set_control_data(time=self.curr_time,name\
+            ='lane_refclk_Ndiv',val=1)
+        f.set_control_data(time=self.curr_time,name\
+            ='lane_refclk_shift',val=0)
+
+    def bypass_tx_dsp(self):
+        f=self._scan.Data.Members['scan_inputs']
+        for tx in range(self.Txantennas):
+            f.set_control_data(time=self.curr_time,name\
+                ='io_ctrl_and_clocks_dac_data_mode_%s' %(tx),val=0)
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_tx_Ndiv',val=1)
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_tx_clkdiv_shift',val=3)
+        f.set_control_data(time=self.curr_time,name\
+            ='lane_refclk_Ndiv',val=1)
+        f.set_control_data(time=self.curr_time,name\
+            ='lane_refclk_shift',val=0)
 
     #def set_dsp_interpolator_scales(self,**kwargs):
     #    dsp_interpolator_scales=kwargs.get('dsp_interpolator_scales',self.dsp_interpolator_scales)
