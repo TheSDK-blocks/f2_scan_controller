@@ -7,19 +7,18 @@
         # 3= Loop, Keep on filling until changed to zero
 
         #Test addressing 
-        #dsp_to_serdes_address   = Vec(numserdes+2,Input(UInt(log2Ceil(neighbours+2).W)))
-        #serdes_to_dsp_address   = Vec(neighbours+2,Input(UInt(log2Ceil(numserdes+2).W)))
+        #dsp_to_serdes_address   = Vec(numserdes+2,Input(UInt(log2Ceil(numserdes+2).W)))
+        #serdes_to_dsp_address   = Vec(2,Input(UInt(log2Ceil(numserdes+2).W)))
         # from_dsp 0, from rx_dsp
-        # from_dsp 1-neighbours from tx_dsp outputs to neighbours
-        # from_dsp neighbours+1 from serdestest memory
+        # from_dsp 1-nserdes from tx_dsp outputs to neighbours
+        # from_dsp nserdes+1 from serdestest memory
 
         # from_serdes( 0 to numseres-1) from serdes rx
         # from_serdes(numserdes) from rx_dsp
         # from_serdes(numserdes+1) from serdestest_memory
 
         # to dsp (0) to tx_dsp_iptr_A
-        # to dsp (1-neighbours) to rx_dsp_neighbours
-        # to dsp (neighbours+1) to serdestest_memory
+        # to dsp (1) to serdestest_memory
         
         # To serdes has only nserdes valid addresses
         # to_serdes(0 to nserdes-1) io.lanes_tx(0 to nserdes-1)
@@ -28,16 +27,16 @@
         #serdes_to_dsp_address(0)=numserdess+1
 
         #To connect to memory the output of the serdes0_rx
-        #serdes_to_dsp_address(neighbours+1)=0
+        #serdes_to_dsp_address(1)=0
 
         #To connect to memory the output of the rx_dsp 
-        # serdes_to_dsp_address(neighbours+1)=numserdes
+        # serdes_to_dsp_address(1)=numserdes
 
         #To connect to serdes0_tx the output of the rx_dsp
         #dsp_to_serdes_address(0)=0
 
         #To connect to serdes0_tx the output of the memory
-        #dsp_to_serdes_address(0)=neighbours+1
+        #dsp_to_serdes_address(0)=nserdes+1
 
         #To connect to serdes0_tx the output of the tx_neighbour_output1
         #dsp_to_serdes_address(0)=1
@@ -71,7 +70,6 @@ class f2_scan_controller(verilog,thesdk):
                           'dsp_interpolator_cic3shift',   
                           'dsp_decimator_cic3shift',
                           'nserdes',
-                          'neighbours'
                         ];    # properties that can be propagated from parent
         self.Rs = 160e6;                 # Highest sampling frequency at 
         self.Rs_dsp = 20e6;              # dsp sampling frequency
@@ -79,7 +77,6 @@ class f2_scan_controller(verilog,thesdk):
         self.Rxantennas = 4;             # Nuber of antenna
         self.Users      = 4;             # Users
         self.nserdes    = 2;             # Serdeses
-        self.neighbours = 2;             # neighbours
         self.memsize    =2**13;          # Test memory size
         self.rx_output_mode = 1;
         self.rx_dsp_mode = 4; #Log2(decimratio) or 4
@@ -193,8 +190,8 @@ class f2_scan_controller(verilog,thesdk):
             ]
             for user in range(self.Users):
                 self.signallist+=[
-                    ('io_ctrl_and_clocks_tx_user_weights_%s_%s_real' %(tx,user),1),
-                    ('io_ctrl_and_clocks_tx_user_weights_%s_%s_imag' %(tx,user),1)
+                    ('io_ctrl_and_clocks_tx_user_weights_%s_%s_real' %(tx,user),511),
+                    ('io_ctrl_and_clocks_tx_user_weights_%s_%s_imag' %(tx,user),511)
                 ]
 
 
@@ -218,8 +215,8 @@ class f2_scan_controller(verilog,thesdk):
             ]
             for user in range(self.Users):
                 self.signallist+=[
-                    ('io_ctrl_and_clocks_rx_user_weights_%s_%s_real' %(rx,user),1),
-                    ('io_ctrl_and_clocks_rx_user_weights_%s_%s_imag' %(rx,user),1)
+                    ('io_ctrl_and_clocks_rx_user_weights_%s_%s_real' %(rx,user),511),
+                    ('io_ctrl_and_clocks_rx_user_weights_%s_%s_imag' %(rx,user),511)
                 ]
 
         self.signallist+=[
@@ -236,7 +233,7 @@ class f2_scan_controller(verilog,thesdk):
                 ('io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(scanind), 0),
             ]
 
-        for scanind in range(self.neighbours+2):
+        for scanind in range(2):
             self.signallist+=[ ('io_ctrl_and_clocks_to_dsp_mode_%s' %(scanind), 1),
                 ('io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(scanind), 0) ]
             
@@ -313,6 +310,7 @@ class f2_scan_controller(verilog,thesdk):
                       'lane_refclk_reset',
                       'io_ctrl_and_clocks_reset_dacfifo',
                       'io_ctrl_and_clocks_reset_outfifo',                      
+                      'io_ctrl_and_clocks_reset_infifo',
                       'io_ctrl_and_clocks_reset_infifo',
                       'io_ctrl_and_clocks_reset_adcfifo'
                       ]:
@@ -395,9 +393,9 @@ class f2_scan_controller(verilog,thesdk):
     def fill_test_memory_through_serdes_rx(self):
         f=self._scan.Data.Members['scan_inputs']
         #To connect to memory the output of the serdes0_rx
-        #serdes_to_dsp_address(neighbours+1)=0
+        #serdes_to_dsp_address(1)=0
         f.set_control_data(time=self.curr_time,name\
-            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(self.neighbours+1),val=0)
+            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(1),val=0)
         #Mode2 is to fill
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=2)
@@ -414,9 +412,9 @@ class f2_scan_controller(verilog,thesdk):
         rate=kwargs.get('rate',self.Rs_dsp)
         f=self._scan.Data.Members['scan_inputs']
         #To connect to memory the output of the rx_dsp 
-        # serdes_to_dsp_address(neighbours+1)=numserdes
+        # serdes_to_dsp_address(1)=numserdes
         f.set_control_data(time=self.curr_time,name\
-            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(self.neighbours+1),
+            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(1),
             val=self.nserdes)
         #Mode2 is to fill
         f.set_control_data(time=self.curr_time,name\
@@ -467,9 +465,9 @@ class f2_scan_controller(verilog,thesdk):
         rate=kwargs.get('rate',self.Rs_dsp)
         duration=kwargs.get('duration',self.memsize*int(1/(rate*1e-12)))
         #To connect to memory the output of the serdes0_rx
-        #serdes_to_dsp_address(neighbours+1)=0
+        #serdes_to_dsp_address(1)=0
         f.set_control_data(time=self.curr_time,name\
-            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(self.neighbours+1),val=0)
+            ='io_ctrl_and_clocks_serdes_to_dsp_address_%s' %(1),val=0)
         #Mode2 is to fill
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=3)
@@ -486,9 +484,9 @@ class f2_scan_controller(verilog,thesdk):
         rate=kwargs.get('rate',self.Rs_dsp)
         duration=kwargs.get('duration',self.memsize*int(1/(rate*1e-12)))
         #To connect to serdes0_tx the output of the memory
-        #dsp_to_serdes_address(0)=neighbours+1
+        #dsp_to_serdes_address(0)=nserdes+1
         f.set_control_data(time=self.curr_time,name\
-            ='io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(0),val=self.neighbours+1)
+            ='io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(0),val=self.nserdes+1)
         #Mode2 is to fill
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=2)
@@ -551,9 +549,9 @@ class f2_scan_controller(verilog,thesdk):
         f=self._scan.Data.Members['scan_inputs']
         duration=kwargs.get('duration',self.memsize*int(1/(self.Rs_dsp*1e-12)))
         #To connect to serdes0_tx the output of the memory
-        #dsp_to_serdes_address(0)=neighbours+1
+        #dsp_to_serdes_address(0)=nserdes+1
         f.set_control_data(time=self.curr_time,name\
-            ='io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(0),val=self.neighbours+1)
+            ='io_ctrl_and_clocks_dsp_to_serdes_address_%s' %(0),val=self.nserdes+1)
         #Mode3 is to loop
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_serdestest_scan_read_mode', val=3)
