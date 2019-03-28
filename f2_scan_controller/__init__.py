@@ -134,6 +134,7 @@ class f2_scan_controller(verilog,thesdk):
                 ('lane_refclk_reset',1),
                 ('io_ctrl_and_clocks_tx_reset_clkdiv', 1),
                 ('io_ctrl_and_clocks_rx_reset_clkdiv', 1),
+                ('io_ctrl_and_clocks_bypass_reset_clkdiv', 1),
                 ('io_ctrl_and_clocks_reset_dacfifo', 1),
                 ('io_ctrl_and_clocks_reset_outfifo', 1),
                 ('io_ctrl_and_clocks_reset_infifo', 1),
@@ -144,6 +145,8 @@ class f2_scan_controller(verilog,thesdk):
                 ('io_ctrl_and_clocks_tx_clkdiv_shift', 0),
                 ('io_ctrl_and_clocks_rx_Ndiv', int(self.Rs/(8*self.Rs_dsp))),
                 ('io_ctrl_and_clocks_rx_clkdiv_shift', 0),
+                ('io_ctrl_and_clocks_bypass_Ndiv', int(self.Rs/self.Rs_dsp)),
+                ('io_ctrl_and_clocks_bypass_clkdiv_shift', 0),
                 ('io_ctrl_and_clocks_user_spread_mode', 0),
                 ('io_ctrl_and_clocks_user_index', 0),
                 ('io_ctrl_and_clocks_antenna_index', 0),
@@ -307,6 +310,7 @@ class f2_scan_controller(verilog,thesdk):
                       'reset_clock_div', 
                       'io_ctrl_and_clocks_tx_reset_clkdiv',
                       'io_ctrl_and_clocks_rx_reset_clkdiv',
+                      'io_ctrl_and_clocks_bypass_reset_clkdiv',
                       'lane_refclk_reset',
                       'io_ctrl_and_clocks_reset_dacfifo',
                       'io_ctrl_and_clocks_reset_outfifo',                      
@@ -322,6 +326,7 @@ class f2_scan_controller(verilog,thesdk):
                       'reset_clock_div', 
                       'io_ctrl_and_clocks_tx_reset_clkdiv',
                       'io_ctrl_and_clocks_rx_reset_clkdiv',
+                      'io_ctrl_and_clocks_bypass_reset_clkdiv',
                       'lane_refclk_reset',
                       'io_ctrl_and_clocks_reset_dacfifo',
                       'io_ctrl_and_clocks_reset_adcfifo',
@@ -440,17 +445,20 @@ class f2_scan_controller(verilog,thesdk):
         f.set_control_data(time=self.curr_time,name\
                     ='io_ctrl_and_clocks_serdestest_scan_write_mode', val=1)
         step=int(1/(self.Rs_dsp*1e-12))
+        val=0
         for address in range(self.memsize):
             f.set_control_data(time=self.curr_time,name\
                 ='io_ctrl_and_clocks_serdestest_scan_write_address', val=address)
             for user in range(self.Users):
-                # Let's make this simple first
+                # Let's make this simple first.  This is a ramp for DAC, i.e. Unsigned integers
                 f.set_control_data(time=self.curr_time,name\
                     ='io_ctrl_and_clocks_serdestest_scan_write_value_data_%s_udata_real'\
-                            %(user) ,val=address)
+                            %(user) ,val=val%(2**9))
                 f.set_control_data(time=self.curr_time,name\
                     ='io_ctrl_and_clocks_serdestest_scan_write_value_data_%s_udata_imag'\
-                            %(user) ,val=address)
+                            %(user) ,val=val%(2**9))
+                val+=1
+
             f.set_control_data(time=self.curr_time,name\
                     ='io_ctrl_and_clocks_serdestest_scan_write_en', val=1)
             self.curr_time+=2*step
@@ -564,6 +572,9 @@ class f2_scan_controller(verilog,thesdk):
 
     def bypass_rx_dsp(self):
         f=self._scan.Data.Members['scan_inputs']
+        for rx in range(self.Rxantennas):
+            f.set_control_data(time=self.curr_time,name\
+                ='io_ctrl_and_clocks_decimator_controls_%s_mode' %(rx), val=0) 
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_rx_output_mode',val=0)
         f.set_control_data(time=self.curr_time,name\
@@ -571,9 +582,13 @@ class f2_scan_controller(verilog,thesdk):
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_rx_Ndiv',val=2)
         f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_bypass_Ndiv',val=16)
+        f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_rx_clkdiv_shift',val=0)
         f.set_control_data(time=self.curr_time,name\
-            ='lane_refclk_Ndiv',val=1)
+            ='io_ctrl_and_clocks_bypass_clkdiv_shift',val=0)
+        f.set_control_data(time=self.curr_time,name\
+            ='lane_refclk_Ndiv',val=16)
         f.set_control_data(time=self.curr_time,name\
             ='lane_refclk_shift',val=0)
 
@@ -587,7 +602,11 @@ class f2_scan_controller(verilog,thesdk):
         f.set_control_data(time=self.curr_time,name\
             ='io_ctrl_and_clocks_tx_clkdiv_shift',val=0)
         f.set_control_data(time=self.curr_time,name\
-            ='lane_refclk_Ndiv',val=1)
+            ='io_ctrl_and_clocks_bypass_Ndiv',val=16)
+        f.set_control_data(time=self.curr_time,name\
+            ='io_ctrl_and_clocks_bypass_clkdiv_shift',val=0)
+        f.set_control_data(time=self.curr_time,name\
+            ='lane_refclk_Ndiv',val=16)
         f.set_control_data(time=self.curr_time,name\
             ='lane_refclk_shift',val=0)
 
